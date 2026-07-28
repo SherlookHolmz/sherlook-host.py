@@ -9,7 +9,7 @@ import subprocess
 
 # Version: 1.4 T.Sin
 # Tel: @T_sinn
-LICENSE_USER = "Sin.Kabir"
+LICENSE_USER = "sherlook"
 LICENSE_REMAINING = "∞"
 LICENSE_PLAN = "g"
 
@@ -150,13 +150,16 @@ def clear_screen():
 
 def print_banner():
     print(f"{COLOR_PRIMARY} ┌────────────────────────────────────────────────────────┐{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ████████╗     ██████╗  ██╗ ███╗   ██╗                 {COLOR_PRIMARY}│{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ╚══██╔══╝    ██╔════╝  ██║ ████╗  ██║                 {COLOR_PRIMARY}│{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}     ██║       ╚█████╗   ██║ ██╔██╗ ██║                 {COLOR_PRIMARY}│{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}     ██║        ╚═══██╗  ██║ ██║╚██╗██║                 {COLOR_PRIMARY}│{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}     ██║  ██╗  ███████║  ██║ ██║ ╚████║                 {COLOR_PRIMARY}│{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}     ╚═╝  ╚═╝  ╚══════╝  ╚═╝ ╚═╝  ╚═══╝                 {COLOR_PRIMARY}│{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ███████╗██╗  ██╗███████╗██████╗ ██╗      ██████╗  ██████╗ ██╗  ██╗  {COLOR_PRIMARY}│{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ██╔════╝██║  ██║██╔════╝██╔══██╗██║     ██╔═══██╗██╔═══██╗██║ ██╔╝  {COLOR_PRIMARY}│{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ███████╗███████║█████╗  ██████╔╝██║     ██║   ██║██║   ██║█████═╝   {COLOR_PRIMARY}│{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ╚════██║██╔══██║██╔══╝  ██╔══██╗██║     ██║   ██║██║   ██║██╔═██╗   {COLOR_PRIMARY}│{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ███████║██║  ██║███████╗██║  ██║███████╗╚██████╔╝╚██████╔╝██║  ██╗  {COLOR_PRIMARY}│{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝  {COLOR_PRIMARY}│{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} ├────────────────────────────────────────────────────────┤{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │  Engine : Sherlook Core Engine v3.6                    │{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │  Status : Strict GeoIP Routing / Full Clean Protocol   │{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} └────────────────────────────────────────────────────────┘{COLOR_RESET}")
     
     col1_raw = f" User: {LICENSE_USER}"
     col2_raw = f" Remaining: {LICENSE_REMAINING}"
@@ -405,7 +408,6 @@ WantedBy=multi-user.target
 def get_node_ip(socks_port):
     try:
         import requests
-        # بررسی آی‌پی با 5 بار تلاش (همون‌طور که خواسته بودی)
         for _ in range(5):
             try:
                 url = 'http://checkip.amazonaws.com'
@@ -965,7 +967,7 @@ def setup_bulk_deployment():
                 print(f"    {COLOR_ERROR}[- ] Timeout -> {name} (Skipping node){COLOR_RESET}")
                 time.sleep(2)
 
-        print(f"\n{COLOR_SUCCESS}[+] Batch setup finished: {success_count} deployed, {failed_count} skipped.{COLOR_RESET}")
+        print(f"\n{COLOR_SUCCESS}[+] Bulk setup finished: {success_count} deployed, {failed_count} skipped.{COLOR_RESET}")
         input("\nPress Enter to return...")
 
 def launch_ez_panel():
@@ -973,7 +975,6 @@ def launch_ez_panel():
     print_banner()
     print(f"{COLOR_PRIMARY}» EZ-Panel Setup / Launch{COLOR_RESET}\n")
 
-    # درخواست اطلاعات پنل از کاربر
     print(f"{COLOR_WARN}[!] Please provide EZ-Panel configuration details:{COLOR_RESET}")
     server_ip = input(f" {COLOR_SECONDARY}↳ Server Address (IP): {COLOR_RESET}").strip()
     admin_user = input(f" {COLOR_SECONDARY}↳ Admin Username: {COLOR_RESET}").strip()
@@ -1006,7 +1007,6 @@ def launch_ez_panel():
     if installed_path:
         print(f"{COLOR_SUCCESS}[+] EZ-Panel detected. Launching...{COLOR_RESET}")
         time.sleep(1)
-        # پاس دادن متغیرها برای استفاده احتمالی پنل و اجرای آن با sudo -E برای حفظ متغیرها
         os.environ['EZ_IP'] = server_ip
         os.environ['EZ_USER'] = admin_user
         os.environ['EZ_PASS'] = admin_pass
@@ -1014,7 +1014,6 @@ def launch_ez_panel():
     else:
         print(f"{COLOR_SECONDARY}[*] EZ-Panel not found. Downloading and installing...{COLOR_RESET}")
         time.sleep(1)
-        # ست کردن اطلاعات ورودی کاربر به عنوان متغیرهای نصبی برای دریافت داخل اسکریپت بش
         cmd = f'export EZ_IP="{server_ip}" EZ_USER="{admin_user}" EZ_PASS="{admin_pass}" && sudo -E bash -c "$(curl -sL "https://raw.githubusercontent.com/1NoJoom/EZ-Panel/main/install.sh?v=$(date +%s)" | tr -d \'\\r\')"'
         os.system(cmd)
 
