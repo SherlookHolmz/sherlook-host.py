@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ====================================================================
-#  SHERLOOK ADVANCED TOR ROUTING ENGINE - FULL GRAPHICAL CORE
+#  SHERLOOK ADVANCED TOR ROUTING ENGINE - FULL GRAPHICAL CORE (FIXED)
 # ====================================================================
 
 import os
@@ -30,7 +30,6 @@ BASE_CONTROL_PORT = 19080
 INSTANCES_DIR = "/etc/tor/sherlook_instances"
 DATA_DIR_BASE = "/var/lib/tor/sherlook_data"
 INSTALL_FLAG_FILE = "/etc/tor/sherlook_installed"
-LOG_DIR = "/var/log/sherlook"
 
 COLOR_PRIMARY = "\033[1;36m"
 COLOR_SECONDARY = "\033[1;34m"
@@ -53,7 +52,7 @@ def print_banner():
     print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ███████║██║  ██║███████╗██║  ██║███████╗╚██████╔╝╚██████╔╝██║  ██╗  {COLOR_PRIMARY}│{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝  {COLOR_PRIMARY}│{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} ├────────────────────────────────────────────────────────┤{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │  Engine : Sherlook Core Engine v3.5                    │{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │  Engine : Sherlook Core Engine v3.6 (Fixed)            │{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} │  Status : Strict GeoIP Routing / Eazy Panel Core       │{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} └────────────────────────────────────────────────────────┘{COLOR_RESET}")
 
@@ -70,7 +69,7 @@ def run_cmd(cmd, check=True):
         return False
 
 def show_progress_bar(duration, task_name):
-    steps = 25
+    steps = 20
     for i in range(steps + 1):
         percent = int((i / steps) * 100)
         filled = int(steps * i // steps)
@@ -107,22 +106,26 @@ def detect_geoip_paths():
         ("/var/lib/tor/geoip", "/var/lib/tor/geoip6")
     ]
     for geoip, geoip6 in possible_paths:
-        if os.path.exists(geoip): return geoip, geoip6
-    return "/usr/share/tor/geoip", "/usr/share/tor/geoip6"
+        if os.path.exists(geoip) and os.path.exists(geoip6):
+            return geoip, geoip6
+    return None, None
 
 def is_system_installed():
     return os.path.exists(INSTALL_FLAG_FILE)
 
-def check_ip(socks_port):
+def check_ip(socks_port, retries=5):
     proxy = f"socks5-hostname://127.0.0.1:{socks_port}"
-    try:
-        cmd = ['curl', '--proxy', proxy, '--max-time', '6', '-s', 'http://ip-api.com/json']
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode == 0 and res.stdout.strip():
-            data = json.loads(res.stdout)
-            if data.get('status') == 'success':
-                return f"{data.get('query', 'N/A')} [{data.get('countryCode', '??')}]"
-    except Exception: pass
+    for attempt in range(retries):
+        try:
+            cmd = ['curl', '--proxy', proxy, '--max-time', '5', '-s', 'http://ip-api.com/json']
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout)
+                if data.get('status') == 'success':
+                    return f"{data.get('query', 'N/A')} [{data.get('countryCode', '??')}]"
+        except Exception:
+            pass
+        time.sleep(2)
     return f"{COLOR_ERROR}Disconnected{COLOR_RESET}"
 
 def install_dependencies():
@@ -160,7 +163,6 @@ def setup_eazy_panel():
         input("\nPress Enter to return...")
         return
 
-    print("This feature creates an encrypted, direct Onion tunnel to your server.")
     target_port = input("Enter local server port (e.g., 22 for SSH, 8080 or 8000 for Panel): ").strip()
     if not target_port.isdigit():
         print(f"{COLOR_ERROR}[-] Invalid port number.{COLOR_RESET}")
@@ -229,22 +231,21 @@ def create_sherlook_instance(country_code, socks_port, control_port):
     inst_conf_dir = f"{INSTANCES_DIR}/{instance_name}"
     inst_data_dir = f"{DATA_DIR_BASE}/{instance_name}"
     tor_user = detect_tor_user()
-    geoip_path, geoip6_path = detect_geoip_paths()
     
     os.makedirs(inst_conf_dir, exist_ok=True)
     os.makedirs(inst_data_dir, exist_ok=True)
+    
+    geoip_path, geoip6_path = detect_geoip_paths()
+    geoip_config = ""
+    if geoip_path and geoip6_path:
+        geoip_config = f"GeoIPFile {geoip_path}\nGeoIPv6File {geoip6_path}\n"
     
     config = f"""DataDirectory {inst_data_dir}
 SocksPort 0.0.0.0:{socks_port}
 ControlPort 127.0.0.1:{control_port}
 CookieAuthentication 0
-GeoIPFile {geoip_path}
-GeoIPv6File {geoip6_path}
-ExitNodes {{{country_code}}}
+{geoip_config}ExitNodes {{{country_code}}}
 StrictNodes 1
-MaxMemInQueues 12 MB
-AvoidDiskWrites 1
-NumEntryGuards 2
 """
     with open(f"{inst_conf_dir}/torrc", 'w') as f: f.write(config)
     run_cmd(["chown", "-R", f"{tor_user}:{tor_user}", inst_conf_dir])
@@ -294,8 +295,9 @@ def setup_single_location():
         control_port = get_free_port(BASE_CONTROL_PORT + offset)
         
         create_sherlook_instance(selected_code, socks_port, control_port)
-        show_progress_bar(2.5, f"Routing [{selected_code.upper()}]")
-        ip_status = check_ip(socks_port)
+        show_progress_bar(3.0, f"Starting [{selected_code.upper()}] Service")
+        print(f"{COLOR_WARN}[*] Waiting for Tor Circuit Bootstrap...{COLOR_RESET}")
+        ip_status = check_ip(socks_port, retries=6)
         print(f"\n{COLOR_SUCCESS}[+] Node Active! Live IP: {ip_status}{COLOR_RESET}")
         input("\nPress Enter to continue...")
 
@@ -336,7 +338,7 @@ def view_installed_locations():
     
     for idx, (code, info) in enumerate(installed.items(), 1):
         name = VALID_COUNTRIES.get(code, "Custom Exit")
-        live_ip = check_ip(info['socks'])
+        live_ip = check_ip(info['socks'], retries=2)
         print(f"{COLOR_PRIMARY}│{COLOR_RESET} {idx:02d:<4} {COLOR_PRIMARY}│{COLOR_RESET} {name:<18} {COLOR_PRIMARY}│{COLOR_RESET} {code.upper():<6} {COLOR_PRIMARY}│{COLOR_RESET} {info['socks']:<8} {COLOR_PRIMARY}│{COLOR_RESET} {live_ip:<20} {COLOR_PRIMARY}│{COLOR_RESET}")
     
     print(f"{COLOR_PRIMARY}└{border}┘{COLOR_RESET}")
