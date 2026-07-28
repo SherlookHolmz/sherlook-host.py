@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ====================================================================
-#  SHERLOOK ADVANCED TOR ROUTING ENGINE - ORIGINAL CORE (FIXED)
+#  SHERLOOK ADVANCED TOR ROUTING ENGINE - STRICT CORE (FULL RECOVERED)
 # ====================================================================
 
 import os
@@ -10,6 +10,7 @@ import shutil
 import socket
 import json
 import subprocess
+import glob
 
 VALID_COUNTRIES = {
     'de': 'Germany', 'tr': 'Turkey', 'us': 'United States', 'fr': 'France', 'at': 'Austria',
@@ -52,8 +53,8 @@ def print_banner():
     print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ███████║██║  ██║███████╗██║  ██║███████╗╚██████╔╝╚██████╔╝██║  ██╗  {COLOR_PRIMARY}│{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝  {COLOR_PRIMARY}│{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} ├────────────────────────────────────────────────────────┤{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │  Engine : Sherlook Core Engine v3.5                    │{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │  Status : Strict GeoIP Routing / Eazy Panel Core       │{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │  Engine : Sherlook Core Engine v3.6                    │{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │  Status : Strict GeoIP Routing / Full Clean Protocol   │{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} └────────────────────────────────────────────────────────┘{COLOR_RESET}")
 
 def check_root():
@@ -113,36 +114,50 @@ def detect_geoip_paths():
 def is_system_installed():
     return os.path.exists(INSTALL_FLAG_FILE)
 
-def check_ip(socks_port, retries=8):
+def check_ip_once(socks_port, timeout=6):
     proxy = f"socks5h://127.0.0.1:{socks_port}"
-    for _ in range(retries):
-        try:
-            cmd = ['curl', '--proxy', proxy, '--max-time', '6', '-s', 'http://ip-api.com/json']
-            res = subprocess.run(cmd, capture_output=True, text=True)
-            if res.returncode == 0 and res.stdout.strip():
-                data = json.loads(res.stdout)
-                if data.get('status') == 'success':
-                    return f"{data.get('query', 'N/A')} [{data.get('countryCode', '??')}]"
-        except Exception:
-            pass
-        time.sleep(2)
+    try:
+        cmd = ['curl', '--proxy', proxy, '--max-time', str(timeout), '-s', 'http://ip-api.com/json']
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            if data.get('status') == 'success':
+                return f"{data.get('query', 'N/A')} [{data.get('countryCode', '??')}]"
+    except Exception:
+        pass
+    return None
+
+def verify_tor_circuit(socks_port, max_attempts=4, delay=4):
+    print(f"\n{COLOR_WARN}[*] Building Tor circuit & validating exit node (4 attempts max)...{COLOR_RESET}")
+    for attempt in range(1, max_attempts + 1):
+        sys.stdout.write(f"\r[*] Attempt {attempt}/{max_attempts}: Requesting IP from Tor circuit...")
+        sys.stdout.flush()
+        ip_res = check_ip_once(socks_port, timeout=6)
+        if ip_res:
+            print(f"\n{COLOR_SUCCESS}[+] Circuit established successfully on Attempt {attempt}!{COLOR_RESET}")
+            return ip_res
+        time.sleep(delay)
+    print()
     return f"{COLOR_ERROR}Disconnected{COLOR_RESET}"
 
 def install_dependencies():
+    env = os.environ.copy()
+    env["DEBIAN_FRONTEND"] = "noninteractive"
+
     show_progress_bar(1.0, "Updating APT Repositories")
-    subprocess.run(['apt-get', 'update', '-qq'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['apt-get', 'update', '-qq'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     show_progress_bar(1.5, "Installing Package 1/4: Tor Service")
-    subprocess.run(['apt-get', 'install', '-y', 'tor'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['apt-get', 'install', '-y', 'tor'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     show_progress_bar(1.5, "Installing Package 2/4: Tor GeoIP Database")
-    subprocess.run(['apt-get', 'install', '-y', 'tor-geoipdb'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['apt-get', 'install', '-y', 'tor-geoipdb'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     show_progress_bar(1.0, "Installing Package 3/4: TorSocks Interface")
-    subprocess.run(['apt-get', 'install', '-y', 'torsocks'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['apt-get', 'install', '-y', 'torsocks'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     show_progress_bar(1.0, "Installing Package 4/4: Curl & Net-Tools")
-    subprocess.run(['apt-get', 'install', '-y', 'curl', 'procps', 'net-tools'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['apt-get', 'install', '-y', 'curl', 'procps', 'net-tools'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     run_cmd(["systemctl", "stop", "tor"])
     run_cmd(["systemctl", "disable", "tor"])
@@ -312,10 +327,8 @@ def setup_single_location():
         control_port = get_free_port(BASE_CONTROL_PORT + offset)
         
         create_sherlook_instance(selected_code, socks_port, control_port)
-        show_progress_bar(3.0, f"Routing [{selected_code.upper()}]")
-        print(f"{COLOR_WARN}[*] Waiting for Tor Circuit Connection...{COLOR_RESET}")
-        ip_status = check_ip(socks_port, retries=8)
-        print(f"\n{COLOR_SUCCESS}[+] Node Active! Live IP: {ip_status}{COLOR_RESET}")
+        live_ip = verify_tor_circuit(socks_port, max_attempts=4, delay=4)
+        print(f"\n{COLOR_SUCCESS}[+] Node Active! Live Exit IP: {live_ip}{COLOR_RESET}")
         input("\nPress Enter to continue...")
 
 def setup_bulk_locations():
@@ -355,7 +368,7 @@ def view_installed_locations():
     
     for idx, (code, info) in enumerate(installed.items(), 1):
         name = VALID_COUNTRIES.get(code, "Custom Exit")
-        live_ip = check_ip(info['socks'], retries=3)
+        live_ip = check_ip_once(info['socks'], timeout=4) or f"{COLOR_ERROR}Disconnected{COLOR_RESET}"
         print(f"{COLOR_PRIMARY}│{COLOR_RESET} {idx:02d:<4} {COLOR_PRIMARY}│{COLOR_RESET} {name:<18} {COLOR_PRIMARY}│{COLOR_RESET} {code.upper():<6} {COLOR_PRIMARY}│{COLOR_RESET} {info['socks']:<8} {COLOR_PRIMARY}│{COLOR_RESET} {live_ip:<20} {COLOR_PRIMARY}│{COLOR_RESET}")
     
     print(f"{COLOR_PRIMARY}└{border}┘{COLOR_RESET}")
@@ -425,17 +438,50 @@ def delete_location():
 def uninstall_system():
     clear_screen()
     print_banner()
-    print(f"{COLOR_PRIMARY}» Option 8 - Full System Uninstall{COLOR_RESET}\n")
-    if input("Are you sure you want to uninstall Sherlook? (y/N): ").strip().lower() == 'y':
-        for code in get_installed_instances().keys():
-            run_cmd(["systemctl", "disable", "--now", f"sherlook-{code}"])
-        run_cmd(["systemctl", "disable", "--now", "sherlook-eazy"])
-        shutil.rmtree(INSTANCES_DIR, ignore_errors=True)
-        shutil.rmtree(DATA_DIR_BASE, ignore_errors=True)
-        shutil.rmtree("/var/lib/tor/sherlook_eazy", ignore_errors=True)
-        if os.path.exists(INSTALL_FLAG_FILE): os.remove(INSTALL_FLAG_FILE)
-        print(f"\n{COLOR_SUCCESS}[+] Sherlook completely uninstalled.{COLOR_RESET}")
-        time.sleep(1.5)
+    print(f"{COLOR_PRIMARY}» Option 8 - Full System Deep Purge & Uninstall{COLOR_RESET}\n")
+    confirm = input("Are you sure you want to completely remove Sherlook and all data? (y/N): ").strip().lower()
+    if confirm != 'y':
+        return
+
+    print(f"\n{COLOR_WARN}[*] Stopping all Sherlook services & purging system files...{COLOR_RESET}")
+    
+    # 1. Stop and remove all systemd services
+    service_files = glob.glob("/etc/systemd/system/sherlook*.service")
+    for s_file in service_files:
+        s_name = os.path.basename(s_file)
+        print(f" -> Stopping & removing service: {s_name}")
+        run_cmd(["systemctl", "disable", "--now", s_name])
+        try:
+            os.remove(s_file)
+        except Exception:
+            pass
+    
+    run_cmd(["systemctl", "daemon-reload"])
+    run_cmd(["systemctl", "reset-failed"])
+
+    # 2. Delete all directories and leftover configs
+    paths_to_remove = [
+        INSTANCES_DIR,
+        DATA_DIR_BASE,
+        "/var/lib/tor/sherlook_eazy",
+        "/etc/tor/sherlook_eazy_torrc",
+        INSTALL_FLAG_FILE,
+        "/usr/local/bin/sherlook"
+    ]
+    
+    for path in paths_to_remove:
+        if os.path.isdir(path):
+            print(f" -> Purging directory: {path}")
+            shutil.rmtree(path, ignore_errors=True)
+        elif os.path.isfile(path):
+            print(f" -> Purging file: {path}")
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+
+    print(f"\n{COLOR_SUCCESS}[+] Sherlook completely uninstalled and wiped from system!{COLOR_RESET}")
+    time.sleep(2)
 
 def main():
     check_root()
