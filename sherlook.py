@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ====================================================================
-#  SHERLOOK ADVANCED TOR ROUTING ENGINE - FULL GRAPHICAL CORE (FIXED)
+#  SHERLOOK ADVANCED TOR ROUTING ENGINE - ORIGINAL CORE (FIXED)
 # ====================================================================
 
 import os
@@ -52,7 +52,7 @@ def print_banner():
     print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ███████║██║  ██║███████╗██║  ██║███████╗╚██████╔╝╚██████╔╝██║  ██╗  {COLOR_PRIMARY}│{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} │{COLOR_SECONDARY}  ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝  {COLOR_PRIMARY}│{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} ├────────────────────────────────────────────────────────┤{COLOR_RESET}")
-    print(f"{COLOR_PRIMARY} │  Engine : Sherlook Core Engine v3.6 (Fixed)            │{COLOR_RESET}")
+    print(f"{COLOR_PRIMARY} │  Engine : Sherlook Core Engine v3.5                    │{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} │  Status : Strict GeoIP Routing / Eazy Panel Core       │{COLOR_RESET}")
     print(f"{COLOR_PRIMARY} └────────────────────────────────────────────────────────┘{COLOR_RESET}")
 
@@ -69,7 +69,7 @@ def run_cmd(cmd, check=True):
         return False
 
 def show_progress_bar(duration, task_name):
-    steps = 20
+    steps = 25
     for i in range(steps + 1):
         percent = int((i / steps) * 100)
         filled = int(steps * i // steps)
@@ -113,11 +113,11 @@ def detect_geoip_paths():
 def is_system_installed():
     return os.path.exists(INSTALL_FLAG_FILE)
 
-def check_ip(socks_port, retries=5):
-    proxy = f"socks5-hostname://127.0.0.1:{socks_port}"
-    for attempt in range(retries):
+def check_ip(socks_port, retries=8):
+    proxy = f"socks5h://127.0.0.1:{socks_port}"
+    for _ in range(retries):
         try:
-            cmd = ['curl', '--proxy', proxy, '--max-time', '5', '-s', 'http://ip-api.com/json']
+            cmd = ['curl', '--proxy', proxy, '--max-time', '6', '-s', 'http://ip-api.com/json']
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode == 0 and res.stdout.strip():
                 data = json.loads(res.stdout)
@@ -129,13 +129,20 @@ def check_ip(socks_port, retries=5):
     return f"{COLOR_ERROR}Disconnected{COLOR_RESET}"
 
 def install_dependencies():
-    show_progress_bar(1.0, "Updating APT cache")
+    show_progress_bar(1.0, "Updating APT Repositories")
     subprocess.run(['apt-get', 'update', '-qq'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    show_progress_bar(1.5, "Installing Tor & Dependencies")
-    subprocess.run(['apt-get', 'install', '-y', '--no-install-recommends', 
-                    'tor', 'tor-geoipdb', 'curl', 'procps', 'net-tools'], 
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    show_progress_bar(1.5, "Installing Package 1/4: Tor Service")
+    subprocess.run(['apt-get', 'install', '-y', 'tor'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    show_progress_bar(1.5, "Installing Package 2/4: Tor GeoIP Database")
+    subprocess.run(['apt-get', 'install', '-y', 'tor-geoipdb'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    show_progress_bar(1.0, "Installing Package 3/4: TorSocks Interface")
+    subprocess.run(['apt-get', 'install', '-y', 'torsocks'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    show_progress_bar(1.0, "Installing Package 4/4: Curl & Net-Tools")
+    subprocess.run(['apt-get', 'install', '-y', 'curl', 'procps', 'net-tools'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     run_cmd(["systemctl", "stop", "tor"])
     run_cmd(["systemctl", "disable", "tor"])
@@ -248,6 +255,9 @@ CookieAuthentication 0
 StrictNodes 1
 """
     with open(f"{inst_conf_dir}/torrc", 'w') as f: f.write(config)
+    
+    run_cmd(["chmod", "755", INSTANCES_DIR])
+    run_cmd(["chmod", "755", inst_conf_dir])
     run_cmd(["chown", "-R", f"{tor_user}:{tor_user}", inst_conf_dir])
     run_cmd(["chown", "-R", f"{tor_user}:{tor_user}", inst_data_dir])
     run_cmd(["chmod", "700", inst_data_dir])
@@ -275,29 +285,36 @@ def setup_single_location():
         print_banner()
         print(f"{COLOR_PRIMARY}» Option 3 - Add Single Location Node{COLOR_RESET}\n")
         installed = get_installed_instances()
-        avail = {k: v for k, v in VALID_COUNTRIES.items() if k not in installed}
-        avail_list = sorted(avail.items())
         
-        for idx, (code, name) in enumerate(avail_list, 1):
-            keys = list(VALID_COUNTRIES.keys())
-            offset = keys.index(code)
-            socks = get_free_port(BASE_SOCKS_PORT + offset)
-            print(f"  {COLOR_PRIMARY}{idx:02d} -{COLOR_RESET} [{code.upper()}] [Port: {socks}] - {name}")
+        country_keys = list(VALID_COUNTRIES.keys())
+        for idx, code in enumerate(country_keys, 1):
+            name = VALID_COUNTRIES[code]
+            socks = BASE_SOCKS_PORT + (idx - 1)
+            if code in installed:
+                status_str = f"{COLOR_SUCCESS}[Installed]{COLOR_RESET}"
+            else:
+                status_str = f"[Port: {socks}]"
+            print(f"  {COLOR_PRIMARY}{idx:02d} -{COLOR_RESET} [{code.upper()}] {status_str:<20} - {name}")
         print(f"  {COLOR_ERROR}00 -{COLOR_RESET} Back to main menu")
 
         choice = input("\nSelect location index: ").strip()
         if choice in ['0', '00', '']: break
-        if not choice.isdigit() or int(choice) < 1 or int(choice) > len(avail_list): continue
+        if not choice.isdigit() or int(choice) < 1 or int(choice) > len(country_keys): continue
 
-        selected_code, selected_name = avail_list[int(choice) - 1]
-        offset = list(VALID_COUNTRIES.keys()).index(selected_code)
+        selected_code = country_keys[int(choice) - 1]
+        if selected_code in installed:
+            print(f"\n{COLOR_WARN}[!] Location [{selected_code.upper()}] is already installed.{COLOR_RESET}")
+            input("\nPress Enter...")
+            continue
+
+        offset = int(choice) - 1
         socks_port = get_free_port(BASE_SOCKS_PORT + offset)
         control_port = get_free_port(BASE_CONTROL_PORT + offset)
         
         create_sherlook_instance(selected_code, socks_port, control_port)
-        show_progress_bar(3.0, f"Starting [{selected_code.upper()}] Service")
-        print(f"{COLOR_WARN}[*] Waiting for Tor Circuit Bootstrap...{COLOR_RESET}")
-        ip_status = check_ip(socks_port, retries=6)
+        show_progress_bar(3.0, f"Routing [{selected_code.upper()}]")
+        print(f"{COLOR_WARN}[*] Waiting for Tor Circuit Connection...{COLOR_RESET}")
+        ip_status = check_ip(socks_port, retries=8)
         print(f"\n{COLOR_SUCCESS}[+] Node Active! Live IP: {ip_status}{COLOR_RESET}")
         input("\nPress Enter to continue...")
 
@@ -338,7 +355,7 @@ def view_installed_locations():
     
     for idx, (code, info) in enumerate(installed.items(), 1):
         name = VALID_COUNTRIES.get(code, "Custom Exit")
-        live_ip = check_ip(info['socks'], retries=2)
+        live_ip = check_ip(info['socks'], retries=3)
         print(f"{COLOR_PRIMARY}│{COLOR_RESET} {idx:02d:<4} {COLOR_PRIMARY}│{COLOR_RESET} {name:<18} {COLOR_PRIMARY}│{COLOR_RESET} {code.upper():<6} {COLOR_PRIMARY}│{COLOR_RESET} {info['socks']:<8} {COLOR_PRIMARY}│{COLOR_RESET} {live_ip:<20} {COLOR_PRIMARY}│{COLOR_RESET}")
     
     print(f"{COLOR_PRIMARY}└{border}┘{COLOR_RESET}")
