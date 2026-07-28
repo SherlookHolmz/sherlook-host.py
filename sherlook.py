@@ -7,7 +7,7 @@ import socket
 import datetime
 import subprocess
 
-# Version: 1.4 T.Sin
+# Version: 1.4 sherlook
 # Tel: @T_sinn
 LICENSE_USER = "sherlook"
 LICENSE_REMAINING = "∞"
