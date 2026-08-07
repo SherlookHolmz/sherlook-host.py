@@ -15,7 +15,7 @@ Features:
   - Clean Sherlook terminal UI
 
 Run:
-    python3 pasarguard_host_manager.py
+    python3 sherlook.py
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ from typing import Any
 
 CONFIG_FILE = Path.home() / ".sherlook_auth.json"
 API_TIMEOUT = 20.0
-MAX_CREATE_WORKERS = 4
-CREATE_RETRIES = 2
+MAX_CREATE_WORKERS = max(1, int(os.getenv("SHERLOOK_CREATE_WORKERS", "4")))
+CREATE_RETRIES = max(0, int(os.getenv("SHERLOOK_CREATE_RETRIES", "2")))
 NUMBER_RE = re.compile(r"(\d+)(?!.*\d)")
 
 
@@ -440,7 +440,7 @@ async def sort_hosts(api: PasarguardAPI, hosts: list[Any]) -> None:
         print(f"{YELLOW}No hosts to sort.{RESET}")
         return
 
-    if not hasattr(ordered[0], "priority"):
+    if "priority" not in (set(CreateHost.model_fields.keys()) if hasattr(CreateHost, "model_fields") else set(getattr(CreateHost, "__fields__", {}).keys())):
         print(
             f"\n{YELLOW}This PasarGuard API model does not expose a "
             f"'priority' field. Nothing was changed on the panel.{RESET}"
@@ -543,7 +543,8 @@ async def main_async() -> None:
             print("  1) 📋 Duplicate host(s)")
             print("  2) 🔢 Sort / group hosts")
             print("  3) 👀 Show host list")
-            print("  4) 🔐 Logout / clear saved credentials")
+            print("  4) 🔄 Refresh host list")
+            print("  5) 🔐 Logout / clear saved credentials")
             print("  0) 🚪 Exit")
 
             choice = input("\n> ").strip()
@@ -556,6 +557,9 @@ async def main_async() -> None:
                 print_hosts(hosts)
                 pause()
             elif choice == "4":
+                print(f"{GREEN}[+] Refreshing host list...{RESET}")
+                continue
+            elif choice == "5":
                 delete_credentials()
                 break
             elif choice == "0":
