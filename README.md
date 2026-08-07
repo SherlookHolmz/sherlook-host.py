@@ -1,99 +1,73 @@
-# 🦅 Sherlook
+# 🦅 Sherlook Host Manager
 
-مجموعه ابزارهای Sherlook برای مدیریت ساده، سریع و حرفه‌ای سرورها و پنل PasarGuard.
+ابزار Sherlook Host Manager برای مدیریت سریع و ساده Hostهای پنل PasarGuard طراحی شده است.
+
+این برنامه با رابط ترمینالی اختصاصی Sherlook، مدیریت Hostها، Duplicate، مرتب‌سازی و سایر عملیات را ساده‌تر می‌کند.
 
 ---
 
-## 🚀 نصب آسان
+## 🚀 اسکریپت نصب
 
-برای نصب کامل Sherlook شامل:
-
-* 🌍 Sherlook Location Manager
-* 📋 PasarGuard Host Manager
-* ⚡ دستور `sherlook`
-* 🔧 نصب خودکار وابستگی‌های موردنیاز
-* 🔄 امکان به‌روزرسانی
-
-## 📥 اسکریپت نصب
+برای نصب کامل Sherlook Host Manager، Dependency موردنیاز و دستور `sherlook-host`، دستور زیر را روی سرور اجرا کنید:
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/SherlookHolmz/multi/main/install-sherlook.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/SherlookHolmz/sherlook-host.py/main/install-sherlook-host.sh)
 ```
 
 ---
 
-## 🦅 اجرای برنامه
+## ▶️ اجرای برنامه
 
-بعد از نصب:
+بعد از نصب، برنامه را با دستور زیر اجرا کنید:
 
 ```bash
-sherlook
+sherlook-host
 ```
 
-منوی اصلی:
-
-```text
-🦅 Sherlook
-
-Select tool:
-
-  1) 🌍 Sherlook Location Manager
-  2) 📋 PasarGuard Host Manager
-  0) 🚪 Exit
-```
-
----
-
-## 🌍 Sherlook Location Manager
-
-با انتخاب گزینه ۱، ابزار اصلی مدیریت Locationهای Sherlook اجرا می‌شود.
-
-فایل اصلی:
-
-```text
-sherlook.sh
-```
-
-اجرای مستقیم:
+اگر بعد از نصب دستور `sherlook-host` شناخته نشد:
 
 ```bash
-bash sherlook.sh
+source ~/.bashrc
+```
+
+سپس:
+
+```bash
+sherlook-host
 ```
 
 ---
 
-## 📋 PasarGuard Host Manager
+## ✨ قابلیت‌ها
 
-با انتخاب گزینه ۲، ابزار مدیریت Hostهای PasarGuard اجرا می‌شود.
-
-فایل اصلی:
-
-```text
-pasarguard_host_manager.py
-```
-
-### امکانات
-
-* 📋 Duplicate کردن Host
-* ⚡ ساخت گروهی Host
-* 🔢 شماره‌گذاری هوشمند
-* 🗂️ گروه‌بندی Hostها
-* ↕️ مرتب‌سازی Hostها
-* 🚀 ساخت همزمان Hostها
-* 🔐 ذخیره اختیاری اطلاعات ورود
-* 🎨 رابط ترمینالی اختصاصی Sherlook
+* 🦅 رابط کاربری اختصاصی Sherlook
+* 🔐 اتصال به پنل PasarGuard
+* 💾 ذخیره اطلاعات ورود برای استفاده‌های بعدی
+* 🚪 Logout و حذف اطلاعات ورود ذخیره‌شده
+* 📋 نمایش لیست Hostهای موجود
+* 📑 Duplicate کردن Host
+* 📦 Duplicate کردن چند Host به‌صورت هم‌زمان
+* 🔢 انتخاب Host به‌صورت تکی، محدوده یا چند انتخاب
+* ⚡ Duplicate کردن تمام Hostها
+* 🧠 شماره‌گذاری و نام‌گذاری هوشمند Hostهای جدید
+* 📊 مرتب‌سازی و Group کردن Hostها
+* 🔄 Refresh کردن لیست Hostها
+* 🛡️ Retry خودکار در درخواست‌های ناموفق
+* 📦 نصب خودکار Dependency موردنیاز
 
 ---
 
 ## 📋 انتخاب Host
 
-امکان انتخاب یک Host:
+برای Duplicate کردن Host می‌توانید یک Host، چند Host یا یک محدوده را انتخاب کنید.
+
+یک Host:
 
 ```text
 5
 ```
 
-بازه‌ای از Hostها:
+یک محدوده:
 
 ```text
 5-9
@@ -105,194 +79,111 @@ pasarguard_host_manager.py
 5,7,9
 ```
 
-انتخاب ترکیبی:
+---
 
-```text
-5-7,10,12-14
-```
+## 📦 Duplicate همه Hostها
+
+در منوی برنامه گزینه Duplicate All Hosts قرار دارد.
+
+با استفاده از این گزینه می‌توانید تعداد Copy موردنظر را برای تمام Hostهای موجود ایجاد کنید.
 
 ---
 
-## 🔢 شماره‌گذاری هوشمند
+## 🔢 نام‌گذاری هوشمند
 
-Sherlook Hostهای موجود را بررسی کرده و شماره مناسب بعدی را انتخاب می‌کند.
-
-مثلاً:
-
-```text
-Germany 1
-Germany 2
-Germany 3
-Germany 7
-```
-
-Host بعدی:
-
-```text
-Germany 8
-```
+هنگام Duplicate کردن Host، برنامه Hostهای موجود را بررسی می‌کند و شماره مناسب را برای Host جدید انتخاب می‌کند تا نام‌گذاری Hostها منظم باقی بماند.
 
 ---
 
-## ⚡ ساخت گروهی
+## 📊 مرتب‌سازی Hostها
 
-ساخت چندین Host با Workerهای همزمان انجام می‌شود تا عملیات سریع‌تر انجام شود.
+برنامه می‌تواند Hostها را بر اساس نام و شماره گروه‌بندی و مرتب کند.
 
-مقدار پیش‌فرض:
-
-```python
-MAX_CREATE_WORKERS = 4
-```
-
-در صورت نیاز می‌توان تعداد Workerها را افزایش داد.
+قبل از اعمال تغییرات، ترتیب پیشنهادی نمایش داده می‌شود.
 
 ---
 
-## 🗂️ مرتب‌سازی Hostها
+## 🔄 Refresh
 
-Hostها بر اساس نام و شماره مرتب می‌شوند.
-
-مثلاً:
-
-```text
-Spain 1
-Spain 10
-Spain 2
-```
-
-به:
-
-```text
-Spain 1
-Spain 2
-Spain 10
-```
-
-تبدیل می‌شوند.
+در صورت ایجاد یا تغییر Host در پنل، می‌توانید از گزینه Refresh استفاده کنید تا لیست Hostها دوباره از پنل دریافت شود.
 
 ---
 
 ## 🔐 اطلاعات ورود
 
-در صورت فعال کردن ذخیره اطلاعات ورود، اطلاعات به‌صورت محلی در فایل زیر ذخیره می‌شود:
+در صورت فعال کردن ذخیره اطلاعات ورود، اطلاعات موردنیاز به‌صورت محلی روی سرور ذخیره می‌شود تا در اجرای بعدی نیاز به وارد کردن مجدد اطلاعات نباشد.
 
-```text
-~/.sherlook_auth.json
-```
-
-برای حذف اطلاعات ذخیره‌شده می‌توانید از گزینه Logout استفاده کنید.
-
-این فایل نباید در GitHub قرار بگیرد.
+اطلاعات ورود خود را در Repository عمومی GitHub قرار ندهید.
 
 ---
 
-## 📁 محل نصب
+## 🖥️ اجرای دستی
 
-Installer فایل‌های Sherlook را در مسیر زیر قرار می‌دهد:
-
-```text
-~/.sherlook/
-```
-
-ساختار:
-
-```text
-~/.sherlook/
-├── sherlook.sh
-├── pasarguard_host_manager.py
-└── VERSION
-```
-
-دستور اصلی:
-
-```text
-~/bin/sherlook
-```
-
----
-
-## 🔄 به‌روزرسانی
-
-برای دریافت آخرین نسخه، اسکریپت نصب را دوباره اجرا کنید.
+در صورت تمایل می‌توانید برنامه را مستقیماً با Python اجرا کنید:
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/SherlookHolmz/multi/main/install-sherlook.sh)
+python3 sherlook-host.py
+```
+
+در صورت نصب نبودن Dependency:
+
+```bash
+python3 -m pip install pasarguard
 ```
 
 ---
 
-## 🧩 نیازمندی‌ها
+## 📁 ساختار پروژه
 
-* Linux
-* Bash
-* Python 3
-* wget
-* دسترسی شبکه
-
-PasarGuard Host Manager در صورت نیاز dependency مربوط به `pasarguard` را به‌صورت خودکار نصب می‌کند.
+```text
+sherlook-host.py/
+├── README.md
+├── install-sherlook-host.sh
+└── sherlook-host.py
+```
 
 ---
 
-## 🛠️ رفع مشکل
+## ⚡ نصب سریع
 
-اگر دستور `sherlook` شناخته نشد:
+اگر فقط می‌خواهید برنامه را نصب کنید:
 
 ```bash
-source ~/.bashrc
+bash <(wget -qO- https://raw.githubusercontent.com/SherlookHolmz/sherlook-host.py/main/install-sherlook-host.sh)
 ```
 
-سپس:
+بعد از نصب:
 
 ```bash
+sherlook-host
+```
+
+---
+
+## 🦅 Sherlook
+
+Sherlook Host Manager یک ابزار مستقل برای مدیریت Hostهای PasarGuard است.
+
+برای جلوگیری از تداخل با پروژه اصلی Sherlook، دستور این پروژه:
+
+```text
+sherlook-host
+```
+
+است.
+
+دستور:
+
+```text
 sherlook
 ```
 
----
-
-## 🔒 امنیت
-
-فایل زیر را در Repository عمومی قرار ندهید:
-
-```text
-.sherlook_auth.json
-```
-
-پیشنهاد می‌شود `.gitignore` شامل موارد زیر باشد:
-
-```text
-.sherlook_auth.json
-__pycache__/
-*.pyc
-.env
-```
+برای پروژه اصلی Sherlook استفاده می‌شود.
 
 ---
 
-## 📦 ساختار Repository
+## ⚠️ توجه
 
-```text
-multi/
-├── sherlook.sh
-├── pasarguard_host_manager.py
-├── install-sherlook.sh
-├── README.md
-└── .gitignore
-```
+این پروژه مخصوص مدیریت Hostهای PasarGuard است.
 
----
-
-## 📜 مجوز
-
-این پروژه تحت مجوز MIT منتشر شده است.
-
-لطفاً از Sherlook فقط برای مدیریت سرورها و پنل‌هایی استفاده کنید که مجوز مدیریت آن‌ها را دارید.
-
----
-
-<div align="center">
-
-🦅 **Sherlook**
-
-Simple Tools • Faster Workflows
-
-</div>
+اطلاعات ورود پنل خود را در Repository عمومی GitHub قرار ندهید.
