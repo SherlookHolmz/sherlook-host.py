@@ -10,10 +10,10 @@ Features:
   - Bulk host duplication with bounded concurrency
   - Smart remark numbering
   - Group/sort preview
-  - Smart Bulk Delete with Auto-Discovery (Introspection)
+  - Safe Bulk Delete (Hosts, Inbounds, Routings, Outbounds)
+  - Interactive Introspection for unknown package versions
   - Local credential cache with restrictive permissions
   - Automatic dependency bootstrap
-  - Clean Sherlook terminal UI
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ import getpass
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -45,8 +44,6 @@ CYAN = "\033[96m"
 YELLOW = "\033[93m"
 GREEN = "\033[92m"
 RED = "\033[91m"
-BLUE = "\033[94m"
-MAGENTA = "\033[95m"
 DIM = "\033[2m"
 
 def clear_screen() -> None:
@@ -87,7 +84,6 @@ def ensure_dependency() -> None:
     commands = [
         [sys.executable, "-m", "pip", "install", "--user", "--no-cache-dir", "pasarguard"],
         [sys.executable, "-m", "pip", "install", "--break-system-packages", "--no-cache-dir", "pasarguard"],
-        [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages", "--no-cache-dir", "pasarguard"],
     ]
 
     last_error = ""
@@ -110,18 +106,16 @@ from pasarguard import CreateHost, PasarguardAPI  # noqa: E402
 
 def _chmod_private(path: Path) -> None:
     try:
-        path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 600
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
     except OSError:
         pass
 
 def load_credentials() -> dict[str, str] | None:
-    if not CONFIG_FILE.exists():
-        return None
+    if not CONFIG_FILE.exists(): return None
     try:
         with CONFIG_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        if not all(data.get(k) for k in ("base_url", "username", "password")):
-            return None
+        if not all(data.get(k) for k in ("base_url", "username", "password")): return None
         _chmod_private(CONFIG_FILE)
         return {
             "base_url": str(data["base_url"]).strip().rstrip("/"),
@@ -132,11 +126,7 @@ def load_credentials() -> dict[str, str] | None:
         return None
 
 def save_credentials(base_url: str, username: str, password: str) -> None:
-    data = {
-        "base_url": base_url.strip().rstrip("/"),
-        "username": username.strip(),
-        "password": password,
-    }
+    data = {"base_url": base_url.strip().rstrip("/"), "username": username.strip(), "password": password}
     try:
         with CONFIG_FILE.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -156,24 +146,20 @@ def delete_credentials() -> None:
 # ---------------------------------------------------------------------------
 
 def get_attr(obj: Any, key: str, default: Any = None) -> Any:
-    if isinstance(obj, dict):
-        return obj.get(key, default)
+    if isinstance(obj, dict): return obj.get(key, default)
     return getattr(obj, key, default)
 
 def split_base_and_number(remark: str) -> tuple[str, int]:
     remark = (remark or "").strip()
     match = NUMBER_RE.search(remark)
-    if not match:
-        return remark.rstrip(), 1
+    if not match: return remark.rstrip(), 1
     number = int(match.group(1))
     start, end = match.span(1)
-    base = (remark[:start] + remark[end:]).rstrip()
-    return base, number
+    return (remark[:start] + remark[end:]).rstrip(), number
 
 def build_remark(base: str, number: int, template: str) -> str:
     match = NUMBER_RE.search(template or "")
-    if not match:
-        return f"{base} {number}".strip()
+    if not match: return f"{base} {number}".strip()
     start, end = match.span(1)
     return f"{template[:start]}{number}{template[end:]}"
 
@@ -216,11 +202,9 @@ async def fetch_hosts(api: PasarguardAPI) -> list[Any]:
     if isinstance(raw, dict):
         hosts: list[Any] = []
         for value in raw.values():
-            if isinstance(value, (list, tuple)):
-                hosts.extend(value)
+            if isinstance(value, (list, tuple)): hosts.extend(value)
         return hosts
-    if hasattr(raw, "hosts"):
-        return list(raw.hosts)
+    if hasattr(raw, "hosts"): return list(raw.hosts)
     return list(raw)
 
 def model_to_dict(model: Any) -> dict[str, Any]:
@@ -335,57 +319,53 @@ async def sort_hosts(api: PasarguardAPI, hosts: list[Any]) -> None:
     pause()
 
 # ---------------------------------------------------------------------------
-# Smart Bulk Delete (With Introspection)
+# Extremely Robust Delete System
 # ---------------------------------------------------------------------------
 
-async def delete_items(api: PasarguardAPI, item_type: str, possible_fetches: list[str], possible_deletes: list[str]) -> None:
-    fetch_func, fetch_method_name = None, ""
+async def delete_items(api: PasarguardAPI, item_type: str) -> None:
+    """Intelligently discovers API methods to fetch and delete without crashing."""
+    
+    # 1. Discover the FETCH method
+    fetch_func = None
+    possible_fetches = [f"get_{item_type}s", f"get_{item_type}", f"list_{item_type}s"]
     for method in possible_fetches:
         if hasattr(api, method):
             fetch_func = getattr(api, method)
-            fetch_method_name = method
             break
-
-    delete_func, delete_method_name = None, ""
-    for method in possible_deletes:
-        if hasattr(api, method):
-            delete_func = getattr(api, method)
-            delete_method_name = method
-            break
-
-    # Introspection: If standard names are missing, scan the library methods
-    if not fetch_func or not delete_func:
-        print(f"{RED}[!] Your pasarguard version doesn't use standard names for '{item_type}'.{RESET}")
-        print(f"{YELLOW}[*] Scanning library internal structure for matching methods...{RESET}")
+            
+    if not fetch_func:
+        print(f"\n{YELLOW}[!] The standard GET method for '{item_type}' was not found in this package version.{RESET}")
         all_methods = [m for m in dir(api) if callable(getattr(api, m)) and not m.startswith("_")]
-        related = [m for m in all_methods if item_type in m.lower() or (item_type == "core" and "node" in m.lower())]
-        
-        print(f"\n{CYAN}Found these related API endpoints inside your package:{RESET}")
-        for m in related:
-            print(f"  - {m}")
-        print(f"\n{DIM}Check the list above to see exactly what the creator named the delete function.{RESET}")
-        pause()
-        return
+        print(f"{CYAN}Available library methods:{RESET}\n  " + "\n  ".join(all_methods))
+        manual_fetch = input(f"\n{GREEN}Please type the exact exact name of the method to FETCH {item_type}s:{RESET} ").strip()
+        if not manual_fetch or not hasattr(api, manual_fetch):
+            return print(f"{RED}Method not found or cancelled.{RESET}")
+        fetch_func = getattr(api, manual_fetch)
 
-    print(f"{CYAN}Fetching {item_type}s (via {fetch_method_name})...{RESET}")
+    # 2. Fetch the items
+    print(f"{CYAN}Fetching {item_type}s...{RESET}")
     try:
         raw = await fetch_func(token=api._token)
         if isinstance(raw, dict):
             items = [v for val in raw.values() for v in (val if isinstance(val, (list, tuple)) else [val])]
-        elif hasattr(raw, fetch_method_name.replace("get_", "").replace("fetch_", "")):
-            items = list(getattr(raw, fetch_method_name.replace("get_", "").replace("fetch_", "")))
         else:
-            items = list(raw)
+            # Check if it returned an object with a matching attribute (e.g., raw.hosts)
+            attr_name = item_type + "s"
+            if hasattr(raw, attr_name):
+                items = list(getattr(raw, attr_name))
+            else:
+                items = list(raw)
     except Exception as exc:
         print(f"{RED}[!] Failed to fetch {item_type}s: {exc}{RESET}")
         pause()
         return
 
     if not items:
-        print(f"{YELLOW}No {item_type}s found.{RESET}")
+        print(f"{YELLOW}No {item_type}s found on the server.{RESET}")
         pause()
         return
 
+    # 3. Print items
     print(f"\n{CYAN}{item_type.capitalize()}s ({len(items)}):{RESET}")
     print("-" * 78)
     for i, item in enumerate(items, start=1):
@@ -400,6 +380,25 @@ async def delete_items(api: PasarguardAPI, item_type: str, possible_fetches: lis
     if input(f"{YELLOW}Confirm deleting {len(indices)} {item_type}(s)? (y/n): {RESET}").strip().lower() != "y":
         return print("Cancelled.")
 
+    # 4. Discover the DELETE method
+    delete_func = None
+    possible_deletes = [f"delete_{item_type}", f"remove_{item_type}", f"del_{item_type}"]
+    for method in possible_deletes:
+        if hasattr(api, method):
+            delete_func = getattr(api, method)
+            break
+            
+    if not delete_func:
+        print(f"\n{YELLOW}[!] The standard DELETE method for '{item_type}' was not found.{RESET}")
+        all_methods = [m for m in dir(api) if callable(getattr(api, m)) and not m.startswith("_")]
+        suggestions = [m for m in all_methods if item_type in m.lower() or "del" in m.lower() or "rem" in m.lower()]
+        print(f"{CYAN}Suggested methods in your package for deletion:{RESET}\n  " + "\n  ".join(suggestions))
+        manual_delete = input(f"\n{GREEN}Please type the exact name of the method to DELETE a {item_type}:{RESET} ").strip()
+        if not manual_delete or not hasattr(api, manual_delete):
+            return print(f"{RED}Method not found or cancelled.{RESET}")
+        delete_func = getattr(api, manual_delete)
+
+    # 5. Execute Delete with robust parameter injection
     success, failed = 0, 0
     for idx in indices:
         item = items[idx - 1]
@@ -407,19 +406,24 @@ async def delete_items(api: PasarguardAPI, item_type: str, possible_fetches: lis
         name = get_attr(item, "remark", get_attr(item, "tag", get_attr(item, "name", "unnamed")))
         
         try:
-            # Smart Parameter Injection: Try host_id, then fallback to id
+            # Fallback 1: specific kwarg (host_id=...)
             try:
                 await delete_func(**{"token": api._token, f"{item_type}_id": item_id})
             except TypeError as te:
-                if "unexpected keyword" in str(te).lower() or "missing" in str(te).lower() or "got multiple" in str(te).lower():
-                    await delete_func(**{"token": api._token, "id": item_id})
+                if "keyword argument" in str(te).lower() or "unexpected" in str(te).lower():
+                    # Fallback 2: generic kwarg (id=...)
+                    try:
+                        await delete_func(**{"token": api._token, "id": item_id})
+                    except TypeError:
+                        # Fallback 3: positional argument (id, token=...)
+                        await delete_func(item_id, token=api._token)
                 else:
                     raise te
                     
             print(f"{GREEN}  ✓ Deleted: {name}{RESET}")
             success += 1
         except Exception as exc:
-            print(f"{RED}  ✗ Failed to delete {name} (via {delete_method_name}): {exc}{RESET}")
+            print(f"{RED}  ✗ Failed to delete {name}: {exc}{RESET}")
             failed += 1
 
     print(f"\n{GREEN}Done.{RESET} Deleted: {success} | Failed: {failed}")
@@ -469,16 +473,17 @@ async def main_async() -> None:
                 continue
 
             print("\n" + "=" * 62)
-            print(f"{CYAN}Sherlook PasarGuard Host Manager{RESET}")
+            print(f"{CYAN}Sherlook PasarGuard Manager{RESET}")
             print(f"Active hosts: {GREEN}{len(hosts)}{RESET}")
             print("=" * 62)
             print("  1) 📋 Duplicate host(s)")
             print("  2) 🔢 Sort / group hosts")
             print("  3) 👀 Show host list")
-            print(f"  4) {RED}🗑️  Delete host(s){RESET}")
-            print(f"  5) {RED}🗑️  Delete core(s){RESET}")
-            print(f"  6) {RED}🗑️  Delete inbound(s){RESET}")
-            print("  7) 🔐 Logout / clear credentials")
+            print(f"  4) {RED}🗑️  Delete Host(s){RESET}")
+            print(f"  5) {RED}🗑️  Delete Inbound(s){RESET}")
+            print(f"  6) {RED}🗑️  Delete Routing(s){RESET}")
+            print(f"  7) {RED}🗑️  Delete Outbound(s){RESET}")
+            print("  8) 🔐 Logout / clear credentials")
             print("  0) 🚪 Exit")
 
             choice = input("\n> ").strip()
@@ -491,24 +496,14 @@ async def main_async() -> None:
                 print_hosts(hosts)
                 pause()
             elif choice == "4":
-                await delete_items(
-                    api, "host", 
-                    ["get_hosts", "fetch_hosts", "list_hosts"], 
-                    ["delete_host", "remove_host", "del_host", "drop_host"]
-                )
+                await delete_items(api, "host")
             elif choice == "5":
-                await delete_items(
-                    api, "core", 
-                    ["get_cores", "get_nodes", "fetch_cores"], 
-                    ["delete_core", "remove_core", "delete_node", "del_core"]
-                )
+                await delete_items(api, "inbound")
             elif choice == "6":
-                await delete_items(
-                    api, "inbound", 
-                    ["get_inbounds", "fetch_inbounds"], 
-                    ["delete_inbound", "remove_inbound", "del_inbound"]
-                )
+                await delete_items(api, "routing")
             elif choice == "7":
+                await delete_items(api, "outbound")
+            elif choice == "8":
                 delete_credentials()
                 break
             elif choice == "0":
