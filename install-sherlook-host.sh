@@ -18,12 +18,11 @@ chmod 700 "$INSTALL_DIR"
 chmod 700 "$APP"
 
 echo "[+] Installing PasarGuard dependency..."
-
+# تلاش برای نصب پکیج با دسترسی سیستم یا کاربر
 python3 -m pip install --quiet --break-system-packages pasarguard 2>/dev/null || \
 python3 -m pip install --quiet --user pasarguard
 
 echo "[+] Creating sherlook-host command..."
-
 cat > "$BIN_DIR/sherlook-host" <<EOF
 #!/bin/bash
 exec python3 "$APP" "\$@"
@@ -31,10 +30,13 @@ EOF
 
 chmod 755 "$BIN_DIR/sherlook-host"
 
-if [ -f "$HOME/.bashrc" ]; then
-    grep -qxF 'export PATH="$HOME/bin:$PATH"' "$HOME/.bashrc" 2>/dev/null || \
-        echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
-fi
+# تنظیم PATH برای bash و zsh
+for RC_FILE in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    if [ -f "$RC_FILE" ]; then
+        grep -qxF 'export PATH="$HOME/bin:$PATH"' "$RC_FILE" 2>/dev/null || \
+            echo 'export PATH="$HOME/bin:$PATH"' >> "$RC_FILE"
+    fi
+done
 
 export PATH="$HOME/bin:$PATH"
 
@@ -46,6 +48,6 @@ echo
 echo "Run:"
 echo "  sherlook-host"
 echo
-echo "If the command is not found:"
-echo "  source ~/.bashrc"
+echo "If the command is not found, reload your shell:"
+echo "  source ~/.bashrc   # (or source ~/.zshrc if using Zsh)"
 echo
