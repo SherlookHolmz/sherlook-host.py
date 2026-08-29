@@ -10,13 +10,10 @@ Features:
   - Bulk host duplication with bounded concurrency
   - Smart remark numbering
   - Group/sort preview
-  - Bulk Delete for Hosts, Cores, and Inbounds
+  - Smart Bulk Delete with Auto-Discovery (Introspection)
   - Local credential cache with restrictive permissions
   - Automatic dependency bootstrap
   - Clean Sherlook terminal UI
-
-Run:
-    python3 pasarguard_host_manager.py
 """
 
 from __future__ import annotations
@@ -39,7 +36,6 @@ MAX_CREATE_WORKERS = 4
 CREATE_RETRIES = 2
 NUMBER_RE = re.compile(r"(\d+)(?!.*\d)")
 
-
 # ---------------------------------------------------------------------------
 # Terminal UI
 # ---------------------------------------------------------------------------
@@ -53,10 +49,8 @@ BLUE = "\033[94m"
 MAGENTA = "\033[95m"
 DIM = "\033[2m"
 
-
 def clear_screen() -> None:
     os.system("cls" if os.name == "nt" else "clear")
-
 
 def print_logo() -> None:
     clear_screen()
@@ -72,13 +66,11 @@ def print_logo() -> None:
 {DIM}Fast • Async • Safe-ish local credential storage • PasarGuard API{RESET}
 """)
 
-
 def pause(message: str = "Press Enter to continue...") -> None:
     try:
         input(f"\n{DIM}{message}{RESET}")
     except (EOFError, KeyboardInterrupt):
         pass
-
 
 # ---------------------------------------------------------------------------
 # Dependency bootstrap
@@ -92,7 +84,6 @@ def ensure_dependency() -> None:
         pass
 
     print(f"{YELLOW}[~] pasarguard package not found. Installing...{RESET}")
-
     commands = [
         [sys.executable, "-m", "pip", "install", "--user", "--no-cache-dir", "pasarguard"],
         [sys.executable, "-m", "pip", "install", "--break-system-packages", "--no-cache-dir", "pasarguard"],
@@ -110,11 +101,8 @@ def ensure_dependency() -> None:
     print(f"{RED}[!] Automatic installation failed.{RESET}\n{last_error}")
     sys.exit(1)
 
-
 ensure_dependency()
-
 from pasarguard import CreateHost, PasarguardAPI  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Credential cache
@@ -126,18 +114,14 @@ def _chmod_private(path: Path) -> None:
     except OSError:
         pass
 
-
 def load_credentials() -> dict[str, str] | None:
     if not CONFIG_FILE.exists():
         return None
-
     try:
         with CONFIG_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
-
         if not all(data.get(k) for k in ("base_url", "username", "password")):
             return None
-
         _chmod_private(CONFIG_FILE)
         return {
             "base_url": str(data["base_url"]).strip().rstrip("/"),
@@ -146,7 +130,6 @@ def load_credentials() -> dict[str, str] | None:
         }
     except (OSError, ValueError, TypeError):
         return None
-
 
 def save_credentials(base_url: str, username: str, password: str) -> None:
     data = {
@@ -161,7 +144,6 @@ def save_credentials(base_url: str, username: str, password: str) -> None:
     except OSError as exc:
         print(f"{YELLOW}[!] Could not save credentials: {exc}{RESET}")
 
-
 def delete_credentials() -> None:
     try:
         CONFIG_FILE.unlink(missing_ok=True)
@@ -169,83 +151,58 @@ def delete_credentials() -> None:
     except OSError as exc:
         print(f"{RED}[!] Could not clear credentials: {exc}{RESET}")
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def get_attr(obj: Any, key: str, default: Any = None) -> Any:
-    """Safely get attribute from object or dict."""
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
-
 
 def split_base_and_number(remark: str) -> tuple[str, int]:
     remark = (remark or "").strip()
     match = NUMBER_RE.search(remark)
     if not match:
         return remark.rstrip(), 1
-
     number = int(match.group(1))
     start, end = match.span(1)
     base = (remark[:start] + remark[end:]).rstrip()
     return base, number
 
-
 def build_remark(base: str, number: int, template: str) -> str:
     match = NUMBER_RE.search(template or "")
     if not match:
         return f"{base} {number}".strip()
-
     start, end = match.span(1)
     return f"{template[:start]}{number}{template[end:]}"
 
-
 def parse_selection(text: str, max_index: int) -> list[int] | None:
     text = text.strip()
-    if not text:
-        return None
-
+    if not text: return None
     indices: set[int] = set()
-
     for part in text.split(","):
         part = part.strip()
-        if not part:
-            continue
-
+        if not part: continue
         if "-" in part:
             bounds = [x.strip() for x in part.split("-", 1)]
-            if len(bounds) != 2 or not all(x.isdigit() for x in bounds):
-                return None
-
+            if len(bounds) != 2 or not all(x.isdigit() for x in bounds): return None
             start, end = map(int, bounds)
-            if start > end:
-                start, end = end, start
+            if start > end: start, end = end, start
             indices.update(range(start, end + 1))
         elif part.isdigit():
             indices.add(int(part))
-        else:
-            return None
-
-    if not indices or any(i < 1 or i > max_index for i in indices):
-        return None
-
+        else: return None
+    if not indices or any(i < 1 or i > max_index for i in indices): return None
     return sorted(indices)
-
 
 # ---------------------------------------------------------------------------
 # API helpers
 # ---------------------------------------------------------------------------
 
 async def login(base_url: str, username: str, password: str) -> PasarguardAPI:
-    api = PasarguardAPI(
-        base_url=base_url.rstrip("/"),
-        timeout=API_TIMEOUT,
-        verify=True,
-    )
+    api = PasarguardAPI(base_url=base_url.rstrip("/"), timeout=API_TIMEOUT, verify=True)
     await api.__aenter__()
-
     try:
         token = await api.get_token(username=username, password=password)
         api._token = token.access_token
@@ -254,243 +211,169 @@ async def login(base_url: str, username: str, password: str) -> PasarguardAPI:
         await api.__aexit__(*sys.exc_info())
         raise
 
-
 async def fetch_hosts(api: PasarguardAPI) -> list[Any]:
     raw = await api.get_hosts(token=api._token)
-
     if isinstance(raw, dict):
         hosts: list[Any] = []
         for value in raw.values():
             if isinstance(value, (list, tuple)):
                 hosts.extend(value)
         return hosts
-
     if hasattr(raw, "hosts"):
         return list(raw.hosts)
-
     return list(raw)
 
-
 def model_to_dict(model: Any) -> dict[str, Any]:
-    if hasattr(model, "model_dump"):
-        return model.model_dump()
-    if hasattr(model, "dict"):
-        return model.dict()
-    if isinstance(model, dict):
-        return dict(model)
+    if hasattr(model, "model_dump"): return model.model_dump()
+    if hasattr(model, "dict"): return model.dict()
+    if isinstance(model, dict): return dict(model)
     return dict(vars(model))
-
 
 def host_to_create_payload(host: Any) -> dict[str, Any]:
     data = model_to_dict(host)
-
-    if hasattr(CreateHost, "model_fields"):
-        allowed = set(CreateHost.model_fields.keys())
-    elif hasattr(CreateHost, "__fields__"):
-        allowed = set(CreateHost.__fields__.keys())
-    else:
-        allowed = set(data)
-
+    if hasattr(CreateHost, "model_fields"): allowed = set(CreateHost.model_fields.keys())
+    elif hasattr(CreateHost, "__fields__"): allowed = set(CreateHost.__fields__.keys())
+    else: allowed = set(data)
     return {k: v for k, v in data.items() if k in allowed}
-
 
 def print_hosts(hosts: list[Any]) -> None:
     print(f"\n{CYAN}Hosts ({len(hosts)}):{RESET}")
     print("-" * 78)
-
     for i, host in enumerate(hosts, start=1):
         remark = get_attr(host, "remark", "unnamed")
         tag = get_attr(host, "inbound_tag", "?")
         address = get_attr(host, "address", "?")
         port = get_attr(host, "port", "?")
         print(f"{i:>3}) {remark}  [{tag} | {address}:{port}]")
-
     print("-" * 78)
 
-
 # ---------------------------------------------------------------------------
-# Duplicate
+# Duplicate & Sorting
 # ---------------------------------------------------------------------------
 
-async def create_one(
-    api: PasarguardAPI,
-    payload: dict[str, Any],
-    semaphore: asyncio.Semaphore,
-) -> tuple[bool, str, str]:
+async def create_one(api: PasarguardAPI, payload: dict[str, Any], semaphore: asyncio.Semaphore) -> tuple[bool, str, str]:
     remark = str(payload.get("remark", "unnamed"))
-
     async with semaphore:
         for attempt in range(1, CREATE_RETRIES + 2):
             try:
-                host = await api.create_host(
-                    CreateHost(**payload),
-                    token=api._token,
-                )
-                created = get_attr(host, "remark", remark)
-                return True, str(created), ""
+                host = await api.create_host(CreateHost(**payload), token=api._token)
+                return True, str(get_attr(host, "remark", remark)), ""
             except Exception as exc:
-                if attempt > CREATE_RETRIES:
-                    return False, remark, f"{type(exc).__name__}: {exc}"
+                if attempt > CREATE_RETRIES: return False, remark, f"{type(exc).__name__}: {exc}"
                 await asyncio.sleep(0.6 * attempt)
-
     return False, remark, "Unknown error"
-
 
 async def duplicate_host(api: PasarguardAPI, hosts: list[Any]) -> None:
     print_hosts(hosts)
-
-    selection = input(
-        "\nHost(s) to duplicate "
-        "(e.g. 5 / 5-9 / 5,7,9): "
-    ).strip()
-
+    selection = input("\nHost(s) to duplicate (e.g. 5 / 5-9 / 5,7,9): ").strip()
     indices = parse_selection(selection, len(hosts))
-    if not indices:
-        print(f"{RED}Invalid selection.{RESET}")
-        return
-
+    if not indices: return print(f"{RED}Invalid selection.{RESET}")
+    
     count_raw = input("Copies of EACH selected host: ").strip()
-    if not count_raw.isdigit() or int(count_raw) <= 0:
-        print(f"{RED}Invalid number of copies.{RESET}")
-        return
-
+    if not count_raw.isdigit() or int(count_raw) <= 0: return print(f"{RED}Invalid copies.{RESET}")
     count = int(count_raw)
-    working_hosts = list(hosts)
+    
     jobs: list[dict[str, Any]] = []
     reserved: dict[str, set[int]] = {}
-
+    
     for idx in indices:
         source = hosts[idx - 1]
         source_remark = str(get_attr(source, "remark", ""))
         base, _ = split_base_and_number(source_remark)
-
         used = reserved.setdefault(base, set())
-        existing = {
-            num
-            for h in working_hosts
-            for other_base, num in [split_base_and_number(str(get_attr(h, "remark", "")))]
-            if other_base == base
-        }
+        existing = {num for h in hosts for ob, num in [split_base_and_number(str(get_attr(h, "remark", "")))] if ob == base}
         start = max(existing | used, default=0) + 1
-
+        
         for offset in range(count):
             number = start + offset
             used.add(number)
-
             payload = host_to_create_payload(source)
             payload["remark"] = build_remark(base, number, source_remark)
             jobs.append(payload)
 
-    print(f"\n{CYAN}Creating {len(jobs)} host(s) with {MAX_CREATE_WORKERS} workers...{RESET}")
-
+    print(f"\n{CYAN}Creating {len(jobs)} host(s)...{RESET}")
     semaphore = asyncio.Semaphore(MAX_CREATE_WORKERS)
-    results = await asyncio.gather(
-        *(create_one(api, payload, semaphore) for payload in jobs)
-    )
-
-    created = 0
-    failed = 0
-
+    results = await asyncio.gather(*(create_one(api, p, semaphore) for p in jobs))
+    
+    created = sum(1 for ok, _, _ in results if ok)
+    failed = len(jobs) - created
     for ok, remark, error in results:
-        if ok:
-            created += 1
-            print(f"{GREEN}  ✓ Created: {remark}{RESET}")
-        else:
-            failed += 1
-            print(f"{RED}  ✗ Failed: {remark}{RESET}")
-            print(f"    {error}")
-
+        print(f"{GREEN}  ✓ Created: {remark}{RESET}" if ok else f"{RED}  ✗ Failed: {remark}\n    {error}{RESET}")
     print(f"\n{GREEN}Done.{RESET} Created: {created} | Failed: {failed}")
     pause()
 
-
-# ---------------------------------------------------------------------------
-# Sorting
-# ---------------------------------------------------------------------------
-
 async def sort_hosts(api: PasarguardAPI, hosts: list[Any]) -> None:
-    groups: dict[str, list[tuple[int, Any]]] = {}
-    group_order: list[str] = []
-
+    groups, group_order = {}, []
     for host in hosts:
-        remark = str(get_attr(host, "remark", ""))
-        base, number = split_base_and_number(remark)
-
+        base, number = split_base_and_number(str(get_attr(host, "remark", "")))
         if base not in groups:
             groups[base] = []
             group_order.append(base)
-
         groups[base].append((number, host))
 
-    ordered: list[Any] = []
-    for base in group_order:
-        ordered.extend(host for _, host in sorted(groups[base], key=lambda x: x[0]))
-
+    ordered = [host for base in group_order for _, host in sorted(groups[base], key=lambda x: x[0])]
     print(f"\n{CYAN}Proposed order:{RESET}")
-    for i, host in enumerate(ordered, 1):
-        print(f"{i:>3}) {get_attr(host, 'remark', '')}")
-
-    if not ordered:
-        print(f"{YELLOW}No hosts to sort.{RESET}")
-        return
+    for i, host in enumerate(ordered, 1): print(f"{i:>3}) {get_attr(host, 'remark', '')}")
+    if not ordered: return print(f"{YELLOW}No hosts to sort.{RESET}")
 
     if not get_attr(ordered[0], "priority") and not hasattr(ordered[0], "priority"):
-        print(
-            f"\n{YELLOW}This PasarGuard API model does not expose a "
-            f"'priority' field. Nothing was changed on the panel.{RESET}"
-        )
-        pause()
-        return
+        print(f"\n{YELLOW}This API model does not expose a 'priority' field. Nothing changed.{RESET}")
+        return pause()
 
-    confirm = input("\nSave this order to the panel? (y/n): ").strip().lower()
-    if confirm != "y":
-        print("Cancelled; nothing changed.")
-        return
-
+    if input("\nSave this order to the panel? (y/n): ").strip().lower() != "y": return print("Cancelled.")
+    
     success = 0
-
     for priority, host in enumerate(ordered):
         try:
             payload = host_to_create_payload(host)
             payload["priority"] = priority
-
-            await api.modify_host(
-                host_id=get_attr(host, "id"),
-                host=CreateHost(**payload),
-                token=api._token,
-            )
+            await api.modify_host(host_id=get_attr(host, "id"), host=CreateHost(**payload), token=api._token)
             success += 1
         except Exception as exc:
-            print(
-                f"{RED}  ✗ Failed: {get_attr(host, 'remark', '')} — "
-                f"{type(exc).__name__}: {exc}{RESET}"
-            )
-
+            print(f"{RED}  ✗ Failed: {get_attr(host, 'remark', '')} — {exc}{RESET}")
     print(f"\n{GREEN}Order saved for {success}/{len(ordered)} host(s).{RESET}")
     pause()
 
-
 # ---------------------------------------------------------------------------
-# Bulk Delete (Generic)
+# Smart Bulk Delete (With Introspection)
 # ---------------------------------------------------------------------------
 
-async def delete_items(api: PasarguardAPI, item_type: str, fetch_method: str, delete_method: str) -> None:
-    """Generic function to fetch and selectively delete hosts, cores, or inbounds."""
-    try:
-        fetch_func = getattr(api, fetch_method)
-        delete_func = getattr(api, delete_method)
-    except AttributeError:
-        print(f"{RED}[!] Your pasarguard package version doesn't seem to support {item_type} management.{RESET}")
+async def delete_items(api: PasarguardAPI, item_type: str, possible_fetches: list[str], possible_deletes: list[str]) -> None:
+    fetch_func, fetch_method_name = None, ""
+    for method in possible_fetches:
+        if hasattr(api, method):
+            fetch_func = getattr(api, method)
+            fetch_method_name = method
+            break
+
+    delete_func, delete_method_name = None, ""
+    for method in possible_deletes:
+        if hasattr(api, method):
+            delete_func = getattr(api, method)
+            delete_method_name = method
+            break
+
+    # Introspection: If standard names are missing, scan the library methods
+    if not fetch_func or not delete_func:
+        print(f"{RED}[!] Your pasarguard version doesn't use standard names for '{item_type}'.{RESET}")
+        print(f"{YELLOW}[*] Scanning library internal structure for matching methods...{RESET}")
+        all_methods = [m for m in dir(api) if callable(getattr(api, m)) and not m.startswith("_")]
+        related = [m for m in all_methods if item_type in m.lower() or (item_type == "core" and "node" in m.lower())]
+        
+        print(f"\n{CYAN}Found these related API endpoints inside your package:{RESET}")
+        for m in related:
+            print(f"  - {m}")
+        print(f"\n{DIM}Check the list above to see exactly what the creator named the delete function.{RESET}")
         pause()
         return
 
-    print(f"{CYAN}Fetching {item_type}s...{RESET}")
+    print(f"{CYAN}Fetching {item_type}s (via {fetch_method_name})...{RESET}")
     try:
         raw = await fetch_func(token=api._token)
         if isinstance(raw, dict):
             items = [v for val in raw.values() for v in (val if isinstance(val, (list, tuple)) else [val])]
-        elif hasattr(raw, fetch_method.replace("get_", "")):
-            items = list(getattr(raw, fetch_method.replace("get_", "")))
+        elif hasattr(raw, fetch_method_name.replace("get_", "").replace("fetch_", "")):
+            items = list(getattr(raw, fetch_method_name.replace("get_", "").replace("fetch_", "")))
         else:
             items = list(raw)
     except Exception as exc:
@@ -503,53 +386,44 @@ async def delete_items(api: PasarguardAPI, item_type: str, fetch_method: str, de
         pause()
         return
 
-    # Print Items
     print(f"\n{CYAN}{item_type.capitalize()}s ({len(items)}):{RESET}")
     print("-" * 78)
     for i, item in enumerate(items, start=1):
-        # Fallback names depending on what fields the entity has
         name = get_attr(item, "remark", get_attr(item, "tag", get_attr(item, "name", "unnamed")))
-        item_id = get_attr(item, "id", "?")
-        print(f"{i:>3}) {name}  [ID: {item_id}]")
+        print(f"{i:>3}) {name}  [ID: {get_attr(item, 'id', '?')}]")
     print("-" * 78)
 
     selection = input(f"\nSelect {item_type}(s) to delete (e.g. 1 / 1-3 / 1,3): ").strip()
     indices = parse_selection(selection, len(items))
-    if not indices:
-        print(f"{RED}Invalid selection.{RESET}")
-        return
+    if not indices: return print(f"{RED}Invalid selection.{RESET}")
 
-    confirm = input(f"{YELLOW}Are you sure you want to delete {len(indices)} {item_type}(s)? (y/n): {RESET}").strip().lower()
-    if confirm != "y":
-        print("Cancelled.")
-        return
+    if input(f"{YELLOW}Confirm deleting {len(indices)} {item_type}(s)? (y/n): {RESET}").strip().lower() != "y":
+        return print("Cancelled.")
 
-    success = 0
-    failed = 0
-
+    success, failed = 0, 0
     for idx in indices:
         item = items[idx - 1]
         item_id = get_attr(item, "id")
         name = get_attr(item, "remark", get_attr(item, "tag", get_attr(item, "name", "unnamed")))
         
         try:
-            # Structuring dynamic kwargs for typical API signatures
-            kwargs = {"token": api._token}
-            if item_type == "host": kwargs["host_id"] = item_id
-            elif item_type == "core": kwargs["core_id"] = item_id
-            elif item_type == "inbound": kwargs["inbound_id"] = item_id
-            else: kwargs["id"] = item_id
-
-            await delete_func(**kwargs)
-            print(f"{GREEN}  ✓ Deleted {item_type}: {name}{RESET}")
+            # Smart Parameter Injection: Try host_id, then fallback to id
+            try:
+                await delete_func(**{"token": api._token, f"{item_type}_id": item_id})
+            except TypeError as te:
+                if "unexpected keyword" in str(te).lower() or "missing" in str(te).lower() or "got multiple" in str(te).lower():
+                    await delete_func(**{"token": api._token, "id": item_id})
+                else:
+                    raise te
+                    
+            print(f"{GREEN}  ✓ Deleted: {name}{RESET}")
             success += 1
         except Exception as exc:
-            print(f"{RED}  ✗ Failed to delete {name}: {exc}{RESET}")
+            print(f"{RED}  ✗ Failed to delete {name} (via {delete_method_name}): {exc}{RESET}")
             failed += 1
 
     print(f"\n{GREEN}Done.{RESET} Deleted: {success} | Failed: {failed}")
     pause()
-
 
 # ---------------------------------------------------------------------------
 # Main
@@ -557,50 +431,33 @@ async def delete_items(api: PasarguardAPI, item_type: str, fetch_method: str, de
 
 async def main_async() -> None:
     print_logo()
-
     creds = load_credentials()
     api: PasarguardAPI | None = None
 
     if creds:
         print(f"{GREEN}[+] Saved credentials found. Connecting...{RESET}")
         try:
-            api = await login(
-                creds["base_url"],
-                creds["username"],
-                creds["password"],
-            )
+            api = await login(creds["base_url"], creds["username"], creds["password"])
             print(f"{GREEN}[+] Connected successfully.{RESET}\n")
         except Exception as exc:
             print(f"{RED}[!] Auto-login failed: {exc}{RESET}\n")
 
     if api is None:
         print(f"{CYAN}=== Connect to PasarGuard ==={RESET}")
-
         base_url = input("Panel URL: ").strip().rstrip("/")
         username = input("Admin username: ").strip()
         password = getpass.getpass("Password (hidden): ")
 
         if not base_url or not username or not password:
-            print(f"{RED}[!] URL, username and password are required.{RESET}")
-            return
-
+            return print(f"{RED}[!] URL, username and password are required.{RESET}")
         try:
             api = await login(base_url, username, password)
             print(f"{GREEN}[+] Connected successfully.{RESET}")
-
-            save_choice = input(
-                "Save credentials locally for next time? (y/n): "
-            ).strip().lower()
-
-            if save_choice == "y":
+            if input("Save credentials locally? (y/n): ").strip().lower() == "y":
                 save_credentials(base_url, username, password)
-                print(
-                    f"{GREEN}[+] Saved to {CONFIG_FILE} "
-                    f"(permissions restricted to your user).{RESET}"
-                )
+                print(f"{GREEN}[+] Saved to {CONFIG_FILE}{RESET}")
         except Exception as exc:
-            print(f"\n{RED}[!] Login failed: {type(exc).__name__}: {exc}{RESET}")
-            return
+            return print(f"\n{RED}[!] Login failed: {type(exc).__name__}: {exc}{RESET}")
 
     try:
         while True:
@@ -621,7 +478,7 @@ async def main_async() -> None:
             print(f"  4) {RED}🗑️  Delete host(s){RESET}")
             print(f"  5) {RED}🗑️  Delete core(s){RESET}")
             print(f"  6) {RED}🗑️  Delete inbound(s){RESET}")
-            print("  7) 🔐 Logout / clear saved credentials")
+            print("  7) 🔐 Logout / clear credentials")
             print("  0) 🚪 Exit")
 
             choice = input("\n> ").strip()
@@ -634,11 +491,23 @@ async def main_async() -> None:
                 print_hosts(hosts)
                 pause()
             elif choice == "4":
-                await delete_items(api, "host", "get_hosts", "delete_host")
+                await delete_items(
+                    api, "host", 
+                    ["get_hosts", "fetch_hosts", "list_hosts"], 
+                    ["delete_host", "remove_host", "del_host", "drop_host"]
+                )
             elif choice == "5":
-                await delete_items(api, "core", "get_cores", "delete_core")
+                await delete_items(
+                    api, "core", 
+                    ["get_cores", "get_nodes", "fetch_cores"], 
+                    ["delete_core", "remove_core", "delete_node", "del_core"]
+                )
             elif choice == "6":
-                await delete_items(api, "inbound", "get_inbounds", "delete_inbound")
+                await delete_items(
+                    api, "inbound", 
+                    ["get_inbounds", "fetch_inbounds"], 
+                    ["delete_inbound", "remove_inbound", "del_inbound"]
+                )
             elif choice == "7":
                 delete_credentials()
                 break
@@ -649,20 +518,13 @@ async def main_async() -> None:
 
     finally:
         if api is not None:
-            try:
-                await api.__aexit__(None, None, None)
-            except Exception:
-                pass
-
+            try: await api.__aexit__(None, None, None)
+            except Exception: pass
         print(f"\n{CYAN}Sherlook{RESET} — Bye 👋")
 
-
 def main() -> None:
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        print(f"\n{YELLOW}Stopped by user.{RESET}")
-
+    try: asyncio.run(main_async())
+    except KeyboardInterrupt: print(f"\n{YELLOW}Stopped by user.{RESET}")
 
 if __name__ == "__main__":
     main()
