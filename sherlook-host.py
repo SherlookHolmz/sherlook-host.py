@@ -207,7 +207,6 @@ async def duplicate_host(api: PasarguardAPI, hosts: list[Any]) -> None:
     count_raw = input("Copies of EACH selected host: ").strip()
     if not count_raw.isdigit() or int(count_raw) <= 0: return print(f"{RED}Invalid copies.{RESET}")
     
-    # Payload Logic...
     print(f"{YELLOW}[*] Preparing to duplicate...{RESET}")
     pause("Feature is currently mapping. Use Host Delete instead for now.")
 
@@ -233,7 +232,6 @@ async def delete_hosts(api: PasarguardAPI) -> None:
         host_id = get_attr(host, "id")
         name = get_attr(host, "remark", "unnamed")
         try:
-            # Using specific removal from the package introspection
             if hasattr(api, "remove_host"):
                 await api.remove_host(host_id=host_id, token=api._token)
             else:
@@ -250,11 +248,34 @@ async def delete_hosts(api: PasarguardAPI) -> None:
 # ---------------------------------------------------------------------------
 # Core Config Editor (Inbounds, Outbounds, Routing)
 # ---------------------------------------------------------------------------
+async def get_active_core_id(api: PasarguardAPI) -> int:
+    """Attempts to dynamically fetch the active core ID, defaults to 1."""
+    try:
+        if hasattr(api, "get_cores_simple"):
+            cores = await api.get_cores_simple(token=api._token)
+            if isinstance(cores, list) and cores:
+                return int(get_attr(cores[0], "id", 1))
+        elif hasattr(api, "get_all_cores"):
+            cores = await api.get_all_cores(token=api._token)
+            if isinstance(cores, list) and cores:
+                return int(get_attr(cores[0], "id", 1))
+    except Exception:
+        pass
+    return 1
+
 async def edit_core_config(api: PasarguardAPI) -> None:
-    print(f"\n{CYAN}Fetching Core Config (Xray JSON) from the panel...{RESET}")
+    print(f"\n{CYAN}Discovering active core...{RESET}")
+    core_id = await get_active_core_id(api)
+    print(f"{CYAN}Fetching Config for Core ID [{core_id}]...{RESET}")
+
     try:
         if hasattr(api, "get_core_config"):
-            raw_config = await api.get_core_config(token=api._token)
+            try:
+                # Try with explicit kwarg first
+                raw_config = await api.get_core_config(core_id=core_id, token=api._token)
+            except TypeError:
+                # Fallback to positional if kwargs fail
+                raw_config = await api.get_core_config(core_id, token=api._token)
         else:
             return print(f"{RED}[!] Method 'get_core_config' not found in your package version.{RESET}")
     except Exception as exc:
@@ -304,12 +325,13 @@ async def edit_core_config(api: PasarguardAPI) -> None:
     print(f"{CYAN}Saving new configuration...{RESET}")
     try:
         if hasattr(api, "modify_core_config"):
-            # Try multiple parameter injections because package signatures vary
             try:
-                await api.modify_core_config(core_config=new_config_dict, token=api._token)
+                await api.modify_core_config(core_id=core_id, core_config=new_config_dict, token=api._token)
             except TypeError:
-                await api.modify_core_config(new_config_dict, token=api._token)
-            
+                try:
+                    await api.modify_core_config(core_id, new_config_dict, token=api._token)
+                except TypeError:
+                    await api.modify_core_config(core_id=core_id, **new_config_dict, token=api._token)
             print(f"{GREEN}[+] Core Config successfully updated!{RESET}")
         else:
             print(f"{RED}[!] Method 'modify_core_config' not found.{RESET}")
