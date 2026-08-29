@@ -3,13 +3,14 @@
 """
 Sherlook PasarGuard Host Manager
 ================================
-Terminal utility for duplicating and sorting PasarGuard hosts.
+Terminal utility for duplicating, sorting, and managing PasarGuard entities.
 
 Features:
   - Async PasarGuard API access
   - Bulk host duplication with bounded concurrency
   - Smart remark numbering
   - Group/sort preview
+  - Bulk Delete for Hosts, Cores, and Inbounds
   - Local credential cache with restrictive permissions
   - Automatic dependency bootstrap
   - Clean Sherlook terminal UI
@@ -170,8 +171,15 @@ def delete_credentials() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Remark / selection helpers
+# Helpers
 # ---------------------------------------------------------------------------
+
+def get_attr(obj: Any, key: str, default: Any = None) -> Any:
+    """Safely get attribute from object or dict."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
 
 def split_base_and_number(remark: str) -> tuple[str, int]:
     remark = (remark or "").strip()
@@ -183,17 +191,6 @@ def split_base_and_number(remark: str) -> tuple[str, int]:
     start, end = match.span(1)
     base = (remark[:start] + remark[end:]).rstrip()
     return base, number
-
-
-def next_available_number(hosts: list[Any], base: str) -> int:
-    used = []
-    for host in hosts:
-        other_base, other_number = split_base_and_number(
-            str(getattr(host, "remark", ""))
-        )
-        if other_base == base:
-            used.append(other_number)
-    return max(used, default=0) + 1
 
 
 def build_remark(base: str, number: int, template: str) -> str:
@@ -294,7 +291,6 @@ def host_to_create_payload(host: Any) -> dict[str, Any]:
     else:
         allowed = set(data)
 
-    # Never blindly send read-only/API response fields.
     return {k: v for k, v in data.items() if k in allowed}
 
 
@@ -303,10 +299,10 @@ def print_hosts(hosts: list[Any]) -> None:
     print("-" * 78)
 
     for i, host in enumerate(hosts, start=1):
-        remark = getattr(host, "remark", "unnamed")
-        tag = getattr(host, "inbound_tag", "?")
-        address = getattr(host, "address", "?")
-        port = getattr(host, "port", "?")
+        remark = get_attr(host, "remark", "unnamed")
+        tag = get_attr(host, "inbound_tag", "?")
+        address = get_attr(host, "address", "?")
+        port = get_attr(host, "port", "?")
         print(f"{i:>3}) {remark}  [{tag} | {address}:{port}]")
 
     print("-" * 78)
@@ -330,7 +326,7 @@ async def create_one(
                     CreateHost(**payload),
                     token=api._token,
                 )
-                created = getattr(host, "remark", remark)
+                created = get_attr(host, "remark", remark)
                 return True, str(created), ""
             except Exception as exc:
                 if attempt > CREATE_RETRIES:
@@ -361,20 +357,18 @@ async def duplicate_host(api: PasarguardAPI, hosts: list[Any]) -> None:
     count = int(count_raw)
     working_hosts = list(hosts)
     jobs: list[dict[str, Any]] = []
-
-    # Allocate all names before concurrent API calls to prevent collisions.
     reserved: dict[str, set[int]] = {}
 
     for idx in indices:
         source = hosts[idx - 1]
-        source_remark = str(getattr(source, "remark", ""))
+        source_remark = str(get_attr(source, "remark", ""))
         base, _ = split_base_and_number(source_remark)
 
         used = reserved.setdefault(base, set())
         existing = {
             num
             for h in working_hosts
-            for other_base, num in [split_base_and_number(str(getattr(h, "remark", "")))]
+            for other_base, num in [split_base_and_number(str(get_attr(h, "remark", "")))]
             if other_base == base
         }
         start = max(existing | used, default=0) + 1
@@ -419,7 +413,7 @@ async def sort_hosts(api: PasarguardAPI, hosts: list[Any]) -> None:
     group_order: list[str] = []
 
     for host in hosts:
-        remark = str(getattr(host, "remark", ""))
+        remark = str(get_attr(host, "remark", ""))
         base, number = split_base_and_number(remark)
 
         if base not in groups:
@@ -434,13 +428,13 @@ async def sort_hosts(api: PasarguardAPI, hosts: list[Any]) -> None:
 
     print(f"\n{CYAN}Proposed order:{RESET}")
     for i, host in enumerate(ordered, 1):
-        print(f"{i:>3}) {getattr(host, 'remark', '')}")
+        print(f"{i:>3}) {get_attr(host, 'remark', '')}")
 
     if not ordered:
         print(f"{YELLOW}No hosts to sort.{RESET}")
         return
 
-    if not hasattr(ordered[0], "priority"):
+    if not get_attr(ordered[0], "priority") and not hasattr(ordered[0], "priority"):
         print(
             f"\n{YELLOW}This PasarGuard API model does not expose a "
             f"'priority' field. Nothing was changed on the panel.{RESET}"
@@ -461,18 +455,99 @@ async def sort_hosts(api: PasarguardAPI, hosts: list[Any]) -> None:
             payload["priority"] = priority
 
             await api.modify_host(
-                host_id=getattr(host, "id"),
+                host_id=get_attr(host, "id"),
                 host=CreateHost(**payload),
                 token=api._token,
             )
             success += 1
         except Exception as exc:
             print(
-                f"{RED}  ✗ Failed: {getattr(host, 'remark', '')} — "
+                f"{RED}  ✗ Failed: {get_attr(host, 'remark', '')} — "
                 f"{type(exc).__name__}: {exc}{RESET}"
             )
 
     print(f"\n{GREEN}Order saved for {success}/{len(ordered)} host(s).{RESET}")
+    pause()
+
+
+# ---------------------------------------------------------------------------
+# Bulk Delete (Generic)
+# ---------------------------------------------------------------------------
+
+async def delete_items(api: PasarguardAPI, item_type: str, fetch_method: str, delete_method: str) -> None:
+    """Generic function to fetch and selectively delete hosts, cores, or inbounds."""
+    try:
+        fetch_func = getattr(api, fetch_method)
+        delete_func = getattr(api, delete_method)
+    except AttributeError:
+        print(f"{RED}[!] Your pasarguard package version doesn't seem to support {item_type} management.{RESET}")
+        pause()
+        return
+
+    print(f"{CYAN}Fetching {item_type}s...{RESET}")
+    try:
+        raw = await fetch_func(token=api._token)
+        if isinstance(raw, dict):
+            items = [v for val in raw.values() for v in (val if isinstance(val, (list, tuple)) else [val])]
+        elif hasattr(raw, fetch_method.replace("get_", "")):
+            items = list(getattr(raw, fetch_method.replace("get_", "")))
+        else:
+            items = list(raw)
+    except Exception as exc:
+        print(f"{RED}[!] Failed to fetch {item_type}s: {exc}{RESET}")
+        pause()
+        return
+
+    if not items:
+        print(f"{YELLOW}No {item_type}s found.{RESET}")
+        pause()
+        return
+
+    # Print Items
+    print(f"\n{CYAN}{item_type.capitalize()}s ({len(items)}):{RESET}")
+    print("-" * 78)
+    for i, item in enumerate(items, start=1):
+        # Fallback names depending on what fields the entity has
+        name = get_attr(item, "remark", get_attr(item, "tag", get_attr(item, "name", "unnamed")))
+        item_id = get_attr(item, "id", "?")
+        print(f"{i:>3}) {name}  [ID: {item_id}]")
+    print("-" * 78)
+
+    selection = input(f"\nSelect {item_type}(s) to delete (e.g. 1 / 1-3 / 1,3): ").strip()
+    indices = parse_selection(selection, len(items))
+    if not indices:
+        print(f"{RED}Invalid selection.{RESET}")
+        return
+
+    confirm = input(f"{YELLOW}Are you sure you want to delete {len(indices)} {item_type}(s)? (y/n): {RESET}").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    success = 0
+    failed = 0
+
+    for idx in indices:
+        item = items[idx - 1]
+        item_id = get_attr(item, "id")
+        name = get_attr(item, "remark", get_attr(item, "tag", get_attr(item, "name", "unnamed")))
+        
+        try:
+            # Structuring dynamic kwargs for typical API signatures
+            kwargs = {"token": api._token}
+            if item_type == "host": kwargs["host_id"] = item_id
+            elif item_type == "core": kwargs["core_id"] = item_id
+            elif item_type == "inbound": kwargs["inbound_id"] = item_id
+            else: kwargs["id"] = item_id
+
+            await delete_func(**kwargs)
+            print(f"{GREEN}  ✓ Deleted {item_type}: {name}{RESET}")
+            success += 1
+        except Exception as exc:
+            print(f"{RED}  ✗ Failed to delete {name}: {exc}{RESET}")
+            failed += 1
+
+    print(f"\n{GREEN}Done.{RESET} Deleted: {success} | Failed: {failed}")
     pause()
 
 
@@ -543,7 +618,10 @@ async def main_async() -> None:
             print("  1) 📋 Duplicate host(s)")
             print("  2) 🔢 Sort / group hosts")
             print("  3) 👀 Show host list")
-            print("  4) 🔐 Logout / clear saved credentials")
+            print(f"  4) {RED}🗑️  Delete host(s){RESET}")
+            print(f"  5) {RED}🗑️  Delete core(s){RESET}")
+            print(f"  6) {RED}🗑️  Delete inbound(s){RESET}")
+            print("  7) 🔐 Logout / clear saved credentials")
             print("  0) 🚪 Exit")
 
             choice = input("\n> ").strip()
@@ -556,6 +634,12 @@ async def main_async() -> None:
                 print_hosts(hosts)
                 pause()
             elif choice == "4":
+                await delete_items(api, "host", "get_hosts", "delete_host")
+            elif choice == "5":
+                await delete_items(api, "core", "get_cores", "delete_core")
+            elif choice == "6":
+                await delete_items(api, "inbound", "get_inbounds", "delete_inbound")
+            elif choice == "7":
                 delete_credentials()
                 break
             elif choice == "0":
